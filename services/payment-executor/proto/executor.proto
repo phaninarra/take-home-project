@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package executor.v1;
+
+option go_package = "github.com/example/payment-executor/gen/executorv1;executorv1";
+
+service TokenService {
+  rpc IssueToken(IssueTokenRequest) returns (IssueTokenResponse);
+}
+
+service ExecutionService {
+  rpc LookupByEndToEndId(LookupByEndToEndIdRequest) returns (Execution);
+  rpc GetExecution(GetExecutionRequest) returns (Execution);
+  rpc SubmitPayment(SubmitPaymentRequest) returns (Execution);
+}
+
+enum ExecutionState {
+  EXECUTION_STATE_UNSPECIFIED = 0;
+  EXECUTION_STATE_PENDING = 1;
+  EXECUTION_STATE_SENT = 2;
+  EXECUTION_STATE_SETTLED = 3;
+  EXECUTION_STATE_FAILED = 4;
+}
+
+message IssueTokenRequest {
+  string client_id = 1;
+  string client_secret = 2;
+}
+
+message IssueTokenResponse {
+  string token = 1;
+  int32 expires_in_seconds = 2;
+}
+
+message LookupByEndToEndIdRequest {
+  string end_to_end_id = 1;
+}
+
+message GetExecutionRequest {
+  string payment_id = 1;
+}
+
+message SubmitPaymentRequest {
+  string end_to_end_id = 1;
+  string program_id = 2;
+  int64 amount_minor = 3;
+  string idempotency_key = 4;
+}
+
+message Execution {
+  string payment_id = 1;
+  string end_to_end_id = 2;
+  string program_id = 3;
+  int64 amount_minor = 4;
+  ExecutionState state = 5;
+  string submitted_at = 6;
+  string settled_at = 7;
+}

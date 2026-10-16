@@ -1,0 +1,113 @@
+#!/usr/bin/env sh
+set -u
+
+if [ -t 1 ]; then
+  GREEN=$(printf '\033[32m'); RED=$(printf '\033[31m')
+  YELLOW=$(printf '\033[33m'); DIM=$(printf '\033[2m'); OFF=$(printf '\033[0m')
+else
+  GREEN=; RED=; YELLOW=; DIM=; OFF=
+fi
+
+pass() { printf '%s  ok  %s%s\n' "$GREEN" "$1" "$OFF"; }
+fail() { printf '%s fail %s%s\n' "$RED" "$1" "$OFF"; }
+warn() { printf '%s warn %s%s\n' "$YELLOW" "$1" "$OFF"; }
+note() { printf '%s      %s%s\n' "$DIM" "$1" "$OFF"; }
+
+FAILED=0
+
+printf '\nChecking your machine\n\n'
+
+if command -v docker >/dev/null 2>&1; then
+  pass "docker found — $(docker --version | sed 's/Docker version //;s/,.*//')"
+else
+  fail "docker not found"
+  note "install Docker Desktop: https://docs.docker.com/get-started/get-docker/"
+  exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  fail "docker is installed but not running"
+  note "start Docker Desktop and run this again"
+  exit 1
+fi
+pass "docker daemon is running"
+
+if docker compose version >/dev/null 2>&1; then
+  pass "docker compose found — $(docker compose version --short 2>/dev/null)"
+else
+  fail "docker compose not found"
+  note "you need Compose v2, which ships with current Docker Desktop"
+  exit 1
+fi
+
+TOTAL_MEM=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0)
+if [ "$TOTAL_MEM" -gt 0 ] 2>/dev/null; then
+  MEM_MB=$((TOTAL_MEM / 1024 / 1024))
+  if [ "$MEM_MB" -lt 2048 ]; then
+    warn "docker has ${MEM_MB}MB of memory, which is tight"
+    note "the stack needs about 1GB; raise it in Docker Desktop settings if this fails"
+  else
+    pass "docker has ${MEM_MB}MB of memory available"
+  fi
+fi
+
+printf '\nBuilding the four services%s (a few minutes the first time)%s\n\n' "$DIM" "$OFF"
+
+if COMPOSE_PARALLEL_LIMIT=2 docker compose build >/tmp/preflight-build.log 2>&1; then
+  pass "all four services built"
+else
+  fail "build failed"
+  note "last 20 lines of the build log:"
+  tail -20 /tmp/preflight-build.log | sed 's/^/      /'
+  note "full log at /tmp/preflight-build.log"
+  exit 1
+fi
+
+printf '\nStarting the stack\n\n'
+
+if docker compose up -d >/tmp/preflight-up.log 2>&1; then
+  pass "containers started"
+else
+  fail "containers would not start"
+  tail -20 /tmp/preflight-up.log | sed 's/^/      /'
+  exit 1
+fi
+
+printf '\nCalling each service\n\n'
+
+probe() {
+  name="$1"
+  url="$2"
+  attempt=0
+  while [ "$attempt" -lt 30 ]; do
+    if curl -fsS --max-time 3 "$url" >/dev/null 2>&1; then
+      pass "$name"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  fail "$name — no answer from $url after 30s"
+  note "logs: docker compose logs $name"
+  FAILED=1
+  return 1
+}
+
+probe payee-directory      http://localhost:8081/health
+probe instruction-registry http://localhost:8082/health
+probe payment-executor     http://localhost:8093/health
+probe settlement-returns   http://localhost:8084/health
+
+printf '\n'
+
+if [ "$FAILED" -ne 0 ]; then
+  printf '%sSomething is not right. Email us — this is our problem, not yours,\n' "$RED"
+  printf 'and it does not count against your time. See SUBMISSION.md.%s\n\n' "$OFF"
+  exit 1
+fi
+
+printf '%sAll four services are up.%s\n\n' "$GREEN" "$OFF"
+printf 'Next:\n'
+printf '  1. Read PROBLEM.md\n'
+printf '  2. Try the examples:  sh examples/01-payee-directory.sh\n'
+printf '  3. Stop the stack:    docker compose down\n\n'
